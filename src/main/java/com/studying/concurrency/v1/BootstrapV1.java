@@ -21,6 +21,7 @@ public class BootstrapV1 {
     private boolean isStop = false;
 
     public BootstrapV1(int port, File docRoot) throws Exception {
+        // 1. 服务端启动8080端口，并一直监听；
         this.ss = new ServerSocket(port, 10);
         this.docRoot = docRoot;
     }
@@ -40,12 +41,19 @@ public class BootstrapV1 {
 
     }
 
+    /**
+     * 接收客户端的Socket,解析输入字节流,并返回结果.
+     * @throws Exception
+     */
     private void process() throws Exception {
+        // 2. 监听到有客户端（比如浏览器）要请求http://localhost:8080/，那么建议连接，TCP三次握手；
         Socket socket = ss.accept();
         InputStream is = socket.getInputStream();
         OutputStream os = socket.getOutputStream();
         BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+
         /**
+         * 3. 建立连接后，读取此次连接客户端传来的内容（其实就是解析网络字节流并按HTTP协议去解析）；
          * GET /dir1/dir2/file.html HTTP/1.1
          */
         String requestLine = reader.readLine();
@@ -69,7 +77,7 @@ public class BootstrapV1 {
         }
 
         BufferedOutputStream bos = new BufferedOutputStream(os);
-
+        // 4. 解析到请求路径（比如此处是根路径），那么去根路径下找资源（比如此处是index.html文件）；
         if (requestedFile.exists()) {
             Logs.SERVER.info("return 200 ok");
             long length = requestedFile.length();
@@ -78,6 +86,7 @@ public class BootstrapV1 {
             byte[] headerBytes = createHeaderBytes("HTTP/1.1 200 OK", length, contentType);
             bos.write(headerBytes);
 
+            // 5. 找到资源后，再通过网络流将内容输出，当然，还是按照HTTP协议去输出，这样客户端（浏览器）就能正常渲染、显示网页内容；
             byte[] buf = new byte[2000];
             int blockLen;
             while ((blockLen = bis.read(buf)) != -1) {
