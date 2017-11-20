@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration>
+    <Appenders>
+        <Console name="console" target="SYSTEM_OUT">
+            <PatternLayout
+                    pattern="%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%thread] [seq=%X{SEQ_ID}] [%C.%M.%L] \#\# %m%n"/>
+        </Console>
+
+        <RollingFile name="root" fileName="logs/root.log"
+                     filePattern="logs/root.log.%-d{yyyy-MM-dd-HH}.gz">
+            <PatternLayout pattern="%d-[TS] %p %t %c - %m%n"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+            </Policies>
+        </RollingFile>
+
+        <RollingFile name="server" fileName="logs/server.log"
+                     filePattern="logs/server.log.%-d{yyyy-MM-dd-HH}.gz">
+            <PatternLayout
+                    pattern="%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%thread] [seq=%X{SEQ_ID}] [%C.%M.%L] \#\# %m%n"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+            </Policies>
+        </RollingFile>
+
+    </Appenders>
+
+    <Loggers>
+
+        <Logger name="com.studying.concurrency" level="info" additivity="false">
+            <appender-ref ref="server"/>
+        </Logger>
+
+        <root level="info">
+            <appender-ref ref="root"/>
+            <AppenderRef ref="console"/>
+        </root>
+
+    </Loggers>
+</Configuration>
