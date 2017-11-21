@@ -1,4 +1,4 @@
-package com.studying.concurrency.v1;
+package com.studying.concurrency.v2;
 
 import com.studying.concurrency.util.Logs;
 
@@ -9,10 +9,10 @@ import java.net.URL;
 import java.net.URLConnection;
 
 /**
- * Created by junweizhang on 17/11/20.
- * 第一版 WebServer,只实现基本功能,所有处理都是main线程中.
+ * Created by junweizhang on 17/11/21.
+ * 第二版 WebServer,将main线程和服务线程分离.
  */
-public class BootstrapV1 {
+public class BootstrapV2 {
 
     private ServerSocket ss;
 
@@ -20,10 +20,24 @@ public class BootstrapV1 {
 
     private boolean isStop = false;
 
-    public BootstrapV1(int port, File docRoot) throws Exception {
+    // 处理HTTP请求线程
+    private Thread logicThread;
+
+    public BootstrapV2(int port, File docRoot) throws Exception {
         // 1. 服务端启动8080端口，并一直监听；
         this.ss = new ServerSocket(port, 10);
         this.docRoot = docRoot;
+        start(this);
+        Logs.SERVER.info("start server ...");
+    }
+
+    /**
+     * 启动处理线程.
+     */
+    private void start(BootstrapV2 server) {
+        logicThread = new Thread(new Worker(server));
+        logicThread.setName("logic-process-thread");
+        logicThread.start();
     }
 
     public void serve() {
@@ -43,6 +57,7 @@ public class BootstrapV1 {
 
     /**
      * 接收客户端的Socket,解析输入字节流,并返回结果.
+     *
      * @throws Exception
      */
     private void process() throws Exception {
@@ -131,14 +146,31 @@ public class BootstrapV1 {
         try {
             int port = 8080;
             String docRootStr = "htmldir";
-            URL url = BootstrapV1.class.getClassLoader().getResource(docRootStr);
+            URL url = BootstrapV2.class.getClassLoader().getResource(docRootStr);
             File docRoot = new File(url.toURI());
-            BootstrapV1 bootstrap = new BootstrapV1(port, docRoot);
-            bootstrap.serve();
+            BootstrapV2 bootstrap = new BootstrapV2(port, docRoot);
         } catch (Exception e) {
             Logs.SERVER.error("main start error", e);
             System.exit(1);
         }
+    }
+
+    /**
+     * 处理HTTP请求的工作者.
+     */
+    public class Worker implements Runnable {
+
+        private BootstrapV2 server;
+
+        public Worker(BootstrapV2 server){
+            this.server = server;
+        }
+
+        @Override
+        public void run() {
+            server.serve();
+        }
+
     }
 
 }

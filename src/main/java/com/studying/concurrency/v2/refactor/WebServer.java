@@ -1,18 +1,21 @@
-package com.studying.concurrency.v1;
+package com.studying.concurrency.v2.refactor;
 
 import com.studying.concurrency.util.Logs;
 
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.URL;
 import java.net.URLConnection;
 
 /**
- * Created by junweizhang on 17/11/20.
- * 第一版 WebServer,只实现基本功能,所有处理都是main线程中.
+ * Created by junweizhang on 17/11/21.
+ * 第二版 WebServer 重构,将main线程和服务线程分离.
+ * 抽象出三个角色:
+ *      Bootstrap-启动器
+ *      WebServer-Web服务器
+ *      Worker-处理HTTP请求的工作者.
  */
-public class BootstrapV1 {
+public class WebServer {
 
     private ServerSocket ss;
 
@@ -20,10 +23,23 @@ public class BootstrapV1 {
 
     private boolean isStop = false;
 
-    public BootstrapV1(int port, File docRoot) throws Exception {
+    // 处理HTTP请求线程
+    private Thread logicThread;
+
+    public WebServer(int port, File docRoot) throws Exception {
         // 1. 服务端启动8080端口，并一直监听；
         this.ss = new ServerSocket(port, 10);
         this.docRoot = docRoot;
+        start(this);
+    }
+
+    /**
+     * 启动处理线程.
+     */
+    private void start(WebServer server) {
+        logicThread = new Thread(new Worker(server));
+        logicThread.setName("logic-process-thread");
+        logicThread.start();
     }
 
     public void serve() {
@@ -43,6 +59,7 @@ public class BootstrapV1 {
 
     /**
      * 接收客户端的Socket,解析输入字节流,并返回结果.
+     *
      * @throws Exception
      */
     private void process() throws Exception {
@@ -127,18 +144,19 @@ public class BootstrapV1 {
         return data;
     }
 
-    public static void main(String[] args) {
-        try {
-            int port = 8080;
-            String docRootStr = "htmldir";
-            URL url = BootstrapV1.class.getClassLoader().getResource(docRootStr);
-            File docRoot = new File(url.toURI());
-            BootstrapV1 bootstrap = new BootstrapV1(port, docRoot);
-            bootstrap.serve();
-        } catch (Exception e) {
-            Logs.SERVER.error("main start error", e);
-            System.exit(1);
+    public class Worker implements Runnable {
+
+        private WebServer server;
+
+        public Worker(WebServer server){
+            this.server = server;
         }
+
+        @Override
+        public void run() {
+            server.serve();
+        }
+
     }
 
 }
