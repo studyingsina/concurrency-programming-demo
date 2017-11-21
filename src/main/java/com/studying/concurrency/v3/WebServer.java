@@ -1,4 +1,4 @@
-package com.studying.concurrency.v2.refactor;
+package com.studying.concurrency.v3;
 
 import com.studying.concurrency.util.Logs;
 
@@ -11,60 +11,117 @@ import java.net.URLConnection;
  * Created by junweizhang on 17/11/21.
  * 第二版 WebServer 重构,将main线程和服务线程分离.
  * 抽象出三个角色:
- *      Bootstrap-启动器
- *      WebServer-Web服务器
- *      Worker-处理HTTP请求的工作者.
+ * Bootstrap-启动器
+ * WebServer-Web服务器
+ * Worker-处理HTTP请求的工作者.
  */
 public class WebServer {
 
+    // ServerSocket
     private ServerSocket ss;
 
+    // 根目录
     private File docRoot;
 
+    // 服务是否停止
     private boolean isStop = false;
+
+    // HTTP监听端口
+    private int port = 8080;
 
     // 处理HTTP请求线程
     private Thread workerThread;
 
+    // 监听Socket线程
+    private Thread acceptorThread;
+
+    // 监听到的socket
+    private Socket socket;
+
+    // 表示当前监听到的socket是否可用
+    private boolean available;
+
     public WebServer(int port, File docRoot) throws Exception {
         // 1. 服务端启动8080端口，并一直监听；
+        this.port = port;
         this.ss = new ServerSocket(port, 10);
         this.docRoot = docRoot;
         start(this);
     }
 
     /**
-     * 启动处理线程.
+     * 必需先启动工作线程,再启动监听线程.
      */
     private void start(WebServer server) {
-        workerThread = new Thread(new Worker(server));
+        // 启动工作线程,工作线程,可以作为守护线程
+        workerThread = new Thread(new Worker());
         workerThread.setName("worker-process-thread");
+        workerThread.setDaemon(true);
         workerThread.start();
+        Logs.SERVER.info("start worker thread : {} ...", workerThread.getName());
+
+        // 启动监听线程,监听线程,不作为守护线程,保证JVM不退出.
+        acceptorThread = new Thread(new Acceptor());
+        acceptorThread.setName("http-acceptor-" + port + "-thread");
+        acceptorThread.start();
+        Logs.SERVER.info("start acceptor thread : {} ...", acceptorThread.getName());
     }
 
     public void serve() {
         Logs.SERVER.info("Http Server ready to receive requests...");
         while (!isStop) {
             try {
-                process();
+                Socket socket = listen();
+                process(socket);
             } catch (Exception e) {
-                Logs.SERVER.info("serve error", e);
+                Logs.SERVER.error("serve error", e);
                 isStop = true;
                 // System.exit(1);
             }
         }
-
-
     }
 
     /**
-     * 接收客户端的Socket,解析输入字节流,并返回结果.
-     *
-     * @throws Exception
+     * 2. 监听到有客户端（比如浏览器）要请求http://localhost:8080/，那么建议连接，TCP三次握手；
      */
-    private void process() throws Exception {
-        // 2. 监听到有客户端（比如浏览器）要请求http://localhost:8080/，那么建议连接，TCP三次握手；
-        Socket socket = ss.accept();
+    private Socket listen() throws IOException {
+        return ss.accept();
+    }
+
+    /**
+     * 由监听线程给socket赋值,以备工作线程从中取值进行处理.
+     */
+    private synchronized void assign(Socket socket) throws Exception {
+        while (available) {
+            Logs.SERVER.info("{} wait assign socket : {}", Thread.currentThread().getName(), socket);
+            this.wait();
+        }
+
+        this.socket = socket;
+        available = true;
+        this.notify();
+    }
+
+    /**
+     * 工作线程取出当前的socket.
+     */
+    private synchronized Socket await() throws Exception {
+        while (!available) {
+            Logs.SERVER.info("{} wait get socket", Thread.currentThread().getName());
+            this.wait();
+        }
+
+        Socket socket = this.socket;
+        available = false;
+        this.notify();
+        return socket;
+    }
+
+    /**
+     * 3. 处理接收到的Socket,解析输入字节流,并返回结果.
+     */
+    private void process(Socket socket) throws Exception {
+
         InputStream is = socket.getInputStream();
         OutputStream os = socket.getOutputStream();
         BufferedReader reader = new BufferedReader(new InputStreamReader(is));
@@ -145,19 +202,44 @@ public class WebServer {
     }
 
     /**
+     * 接收器,监听HTTP端口,接收Socket.
+     */
+    public class Acceptor implements Runnable {
+
+        @Override
+        public void run() {
+            try {
+                while (!isStop) {
+                    Logs.SERVER.info("acceptor begin listen socket ...");
+                    Socket socket = listen();
+                    Logs.SERVER.info("acceptor a new socket : {}", socket);
+                    assign(socket);
+                }
+            } catch (Exception e) {
+                Logs.SERVER.error("Acceptor process error", e);
+            }
+        }
+    }
+
+    /**
      * 处理HTTP请求的工作者.
      */
     public class Worker implements Runnable {
 
-        private WebServer server;
-
-        public Worker(WebServer server){
-            this.server = server;
-        }
-
         @Override
         public void run() {
-            server.serve();
+            try {
+                while (!isStop) {
+                    Socket s = await();
+                    if (s != null) {
+                        Logs.SERVER.info("worker begin process socket : {}", socket);
+                        process(s);
+                        socket = null;
+                    }
+                }
+            } catch (Exception e) {
+                Logs.SERVER.error("Worker process error", e);
+            }
         }
 
     }

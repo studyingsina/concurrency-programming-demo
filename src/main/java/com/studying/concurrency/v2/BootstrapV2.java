@@ -21,7 +21,7 @@ public class BootstrapV2 {
     private boolean isStop = false;
 
     // 处理HTTP请求线程
-    private Thread logicThread;
+    private Thread workerThread;
 
     public BootstrapV2(int port, File docRoot) throws Exception {
         // 1. 服务端启动8080端口，并一直监听；
@@ -35,9 +35,9 @@ public class BootstrapV2 {
      * 启动处理线程.
      */
     private void start(BootstrapV2 server) {
-        logicThread = new Thread(new Worker(server));
-        logicThread.setName("logic-process-thread");
-        logicThread.start();
+        workerThread = new Thread(new Worker(server));
+        workerThread.setName("worker-process-thread");
+        workerThread.start();
     }
 
     public void serve() {

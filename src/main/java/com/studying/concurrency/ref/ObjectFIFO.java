@@ -1,4 +1,4 @@
-package com.studying.concurrency.v10;
+package com.studying.concurrency.ref;
 
 public class ObjectFIFO {
     private Object[] queue;
