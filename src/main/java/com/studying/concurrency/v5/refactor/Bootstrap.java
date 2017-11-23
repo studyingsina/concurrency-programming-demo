@@ -1,4 +1,4 @@
-package com.studying.concurrency.v4;
+package com.studying.concurrency.v5.refactor;
 
 import com.studying.concurrency.util.Logs;
 
@@ -6,14 +6,15 @@ import java.io.File;
 import java.net.URL;
 
 /**
- * Created by junweizhang on 17/11/22.
- * 第四版 缓解监听器线程忙等问题.
+ * Created by junweizhang on 17/11/23.
+ * 第五版 增加工作线程-线程池.
  * 抽象出五个角色:
  *      Bootstrap-启动器
  *      WebServer-Web服务器
  *      Worker-处理HTTP请求的工作者.
  *      Acceptor-监听器
  *      Queue-任务队列
+ *      ThreadPool-线程池
  */
 public class Bootstrap {
 

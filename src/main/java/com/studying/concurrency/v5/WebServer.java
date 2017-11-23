@@ -1,4 +1,4 @@
-package com.studying.concurrency.v4;
+package com.studying.concurrency.v5;
 
 import com.studying.concurrency.util.Logs;
 
@@ -8,14 +8,14 @@ import java.net.Socket;
 import java.net.URLConnection;
 
 /**
- * Created by junweizhang on 17/11/22.
- * 第四版 缓解监听器线程忙等问题.
+ * Created by junweizhang on 17/11/23.
+ * 第五版 增加工作线程-线程池.
  * 抽象出五个角色:
- *  Bootstrap-启动器
- *  WebServer-Web服务器
- *  Worker-处理HTTP请求的工作者
- *  Acceptor-监听器
- *  Queue-任务队列
+ * Bootstrap-启动器
+ * WebServer-Web服务器
+ * Worker-处理HTTP请求的工作者.
+ * Acceptor-监听器
+ * Queue-任务队列
  */
 public class WebServer {
 
@@ -31,8 +31,8 @@ public class WebServer {
     // HTTP监听端口
     private int port = 8080;
 
-    // 处理HTTP请求线程
-    private Thread workerThread;
+    // 处理HTTP请求线程组
+    private Worker[] workers;
 
     // 监听Socket线程
     private Thread acceptorThread;
@@ -46,39 +46,26 @@ public class WebServer {
         this.ss = new ServerSocket(port, 10);
         this.docRoot = docRoot;
         this.socketQueue = new SimpleQueue<>(3);
-        start(this);
+        start();
     }
 
     /**
      * 必需先启动工作线程,再启动监听线程.
      */
-    private void start(WebServer server) {
+    private void start() {
         // 启动工作线程,工作线程,可以作为守护线程
-        workerThread = new Thread(new Worker());
-        workerThread.setName("worker-process-thread");
-        workerThread.setDaemon(true);
-        workerThread.start();
-        Logs.SERVER.info("start worker thread : {} ...", workerThread.getName());
+        int poolSize = 2;
+        workers = new Worker[poolSize];
+        for (int i = 0; i < poolSize; i++) {
+            workers[i] = new Worker(i);
+        }
+        Logs.SERVER.info("start workerPool size : {} ...", poolSize);
 
         // 启动监听线程,监听线程,不作为守护线程,保证JVM不退出.
         acceptorThread = new Thread(new Acceptor());
         acceptorThread.setName("http-acceptor-" + port + "-thread");
         acceptorThread.start();
         Logs.SERVER.info("start acceptor thread : {} ...", acceptorThread.getName());
-    }
-
-    public void serve() {
-        Logs.SERVER.info("Http Server ready to receive requests...");
-        while (!isStop) {
-            try {
-                Socket socket = listen();
-                process(socket);
-            } catch (Exception e) {
-                Logs.SERVER.error("serve error", e);
-                isStop = true;
-                // System.exit(1);
-            }
-        }
     }
 
     /**
@@ -211,6 +198,16 @@ public class WebServer {
      */
     public class Worker implements Runnable {
 
+        // 工作线程
+        private Thread thread;
+
+        public Worker(int index) {
+            Thread workerThread = new Thread(this);
+            workerThread.setName("worker-process-thread-" + index);
+            workerThread.setDaemon(true);
+            workerThread.start();
+        }
+
         @Override
         public void run() {
             try {
@@ -258,7 +255,7 @@ public class WebServer {
 
         public synchronized void put(E e) throws InterruptedException {
             // 监听器线程往队列中放入socket,如果当前队列满了则监听器等待
-            if (isFull()) {
+            while (isFull()) {
                 Logs.SERVER.info("{} wait put queue : {}", Thread.currentThread().getName(), e);
                 wait();
             }
@@ -266,13 +263,14 @@ public class WebServer {
             items[putIndex] = e;
             putIndex = (putIndex + 1) % capacity;
             size++;
-            Logs.SERVER.info("queue isFull {}, isEmpty {}, capacity {}, size {}, takeIndex {}, putIndex {}", isFull(), isEmpty(), capacity, size, takeIndex, putIndex);
-            notify();
+            Logs.SERVER.info("queue isFull {}, isEmpty {}, capacity {}, size {}, takeIndex {}, putIndex {}", isFull(), isEmpty(),
+                    capacity, size, takeIndex, putIndex);
+            notifyAll();
         }
 
         public synchronized E take() throws InterruptedException {
             // 工作线程来取socket,如果当前队列为空,则工作线程进行等待
-            if (isEmpty()) {
+            while (isEmpty()) {
                 Logs.SERVER.info("{} wait get socket", Thread.currentThread().getName());
                 wait();
             }
@@ -282,7 +280,8 @@ public class WebServer {
             items[takeIndex] = null;
             takeIndex = (takeIndex + 1) % capacity;
             size--;
-            Logs.SERVER.info("queue isFull {}, isEmpty {}, capacity {}, size {}, takeIndex {}, putIndex {}", isFull(), isEmpty(), capacity, size, takeIndex, putIndex);
+            Logs.SERVER.info("queue isFull {}, isEmpty {}, capacity {}, size {}, takeIndex {}, putIndex {}", isFull(), isEmpty(),
+                    capacity, size, takeIndex, putIndex);
             notify();
             return e;
         }

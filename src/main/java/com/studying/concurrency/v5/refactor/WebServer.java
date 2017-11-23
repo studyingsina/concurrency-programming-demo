@@ -1,4 +1,4 @@
-package com.studying.concurrency.v4;
+package com.studying.concurrency.v5.refactor;
 
 import com.studying.concurrency.util.Logs;
 
@@ -8,14 +8,15 @@ import java.net.Socket;
 import java.net.URLConnection;
 
 /**
- * Created by junweizhang on 17/11/22.
- * 第四版 缓解监听器线程忙等问题.
+ * Created by junweizhang on 17/11/23.
+ * 第五版 增加工作线程-线程池.
  * 抽象出五个角色:
- *  Bootstrap-启动器
- *  WebServer-Web服务器
- *  Worker-处理HTTP请求的工作者
- *  Acceptor-监听器
- *  Queue-任务队列
+ * Bootstrap-启动器
+ * WebServer-Web服务器
+ * Worker-处理HTTP请求的工作者.
+ * Acceptor-监听器
+ * Queue-任务队列
+ * ThreadPool-线程池
  */
 public class WebServer {
 
@@ -31,34 +32,26 @@ public class WebServer {
     // HTTP监听端口
     private int port = 8080;
 
-    // 处理HTTP请求线程
-    private Thread workerThread;
+    // 处理HTTP请求线程池
+    private ThreadPool threadPool;
 
     // 监听Socket线程
     private Thread acceptorThread;
-
-    // 监听到的socket队列
-    private SimpleQueue<Socket> socketQueue;
 
     public WebServer(int port, File docRoot) throws Exception {
         // 1. 服务端启动8080端口，并一直监听；
         this.port = port;
         this.ss = new ServerSocket(port, 10);
         this.docRoot = docRoot;
-        this.socketQueue = new SimpleQueue<>(3);
-        start(this);
+        start();
     }
 
     /**
      * 必需先启动工作线程,再启动监听线程.
      */
-    private void start(WebServer server) {
+    private void start() {
         // 启动工作线程,工作线程,可以作为守护线程
-        workerThread = new Thread(new Worker());
-        workerThread.setName("worker-process-thread");
-        workerThread.setDaemon(true);
-        workerThread.start();
-        Logs.SERVER.info("start worker thread : {} ...", workerThread.getName());
+        threadPool = new ThreadPool(2);
 
         // 启动监听线程,监听线程,不作为守护线程,保证JVM不退出.
         acceptorThread = new Thread(new Acceptor());
@@ -88,19 +81,6 @@ public class WebServer {
         return ss.accept();
     }
 
-    /**
-     * 由监听线程往队列中放入socket,以备工作线程从中取值进行处理.
-     */
-    private void assign(Socket socket) throws Exception {
-        socketQueue.put(socket);
-    }
-
-    /**
-     * 工作线程从队列中取出socket.
-     */
-    private Socket await() throws Exception {
-        return socketQueue.take();
-    }
 
     /**
      * 3. 处理接收到的Socket,解析输入字节流,并返回结果.
@@ -198,7 +178,8 @@ public class WebServer {
                     Logs.SERVER.info("acceptor begin listen socket ...");
                     Socket s = listen();
                     Logs.SERVER.info("acceptor a new socket : {}", s);
-                    assign(s);
+                    // assign(s);
+                    threadPool.assign(s);
                 }
             } catch (Exception e) {
                 Logs.SERVER.error("Acceptor process error", e);
@@ -211,11 +192,25 @@ public class WebServer {
      */
     public class Worker implements Runnable {
 
+        // 工作线程
+        private Thread workerThread;
+
+        // 工作线程所在的线程池对象
+        private ThreadPool pool;
+
+        public Worker(ThreadPool pool, int index) {
+            this.pool = pool;
+            workerThread = new Thread(this);
+            workerThread.setName("worker-process-thread-" + index);
+            workerThread.setDaemon(true);
+            workerThread.start();
+        }
+
         @Override
         public void run() {
             try {
-                while (!isStop) {
-                    Socket s = await();
+                while (!isStop && !workerThread.isInterrupted()) {
+                    Socket s = pool.await();
                     if (s != null) {
                         Logs.SERVER.info("worker begin process socket : {}", s);
                         process(s);
@@ -258,7 +253,7 @@ public class WebServer {
 
         public synchronized void put(E e) throws InterruptedException {
             // 监听器线程往队列中放入socket,如果当前队列满了则监听器等待
-            if (isFull()) {
+            while (isFull()) {
                 Logs.SERVER.info("{} wait put queue : {}", Thread.currentThread().getName(), e);
                 wait();
             }
@@ -266,13 +261,14 @@ public class WebServer {
             items[putIndex] = e;
             putIndex = (putIndex + 1) % capacity;
             size++;
-            Logs.SERVER.info("queue isFull {}, isEmpty {}, capacity {}, size {}, takeIndex {}, putIndex {}", isFull(), isEmpty(), capacity, size, takeIndex, putIndex);
-            notify();
+            Logs.SERVER.info("queue isFull {}, isEmpty {}, capacity {}, size {}, takeIndex {}, putIndex {}", isFull(), isEmpty(),
+                    capacity, size, takeIndex, putIndex);
+            notifyAll();
         }
 
         public synchronized E take() throws InterruptedException {
             // 工作线程来取socket,如果当前队列为空,则工作线程进行等待
-            if (isEmpty()) {
+            while (isEmpty()) {
                 Logs.SERVER.info("{} wait get socket", Thread.currentThread().getName());
                 wait();
             }
@@ -282,7 +278,8 @@ public class WebServer {
             items[takeIndex] = null;
             takeIndex = (takeIndex + 1) % capacity;
             size--;
-            Logs.SERVER.info("queue isFull {}, isEmpty {}, capacity {}, size {}, takeIndex {}, putIndex {}", isFull(), isEmpty(), capacity, size, takeIndex, putIndex);
+            Logs.SERVER.info("queue isFull {}, isEmpty {}, capacity {}, size {}, takeIndex {}, putIndex {}", isFull(), isEmpty(),
+                    capacity, size, takeIndex, putIndex);
             notify();
             return e;
         }
@@ -295,6 +292,41 @@ public class WebServer {
             return size == 0;
         }
 
+    }
+
+    /**
+     * 一个简单的固定大小线程池,数据实现,任务先放入阻塞队列,工作线程不断去队列中取任务.
+     */
+    public class ThreadPool {
+
+        // 监听到的socket队列
+        private SimpleQueue<Socket> socketQueue;
+
+        // 线程组
+        private Worker[] workers;
+
+        public ThreadPool(int poolSize) {
+            this.socketQueue = new SimpleQueue<>(3);
+            workers = new Worker[poolSize];
+            for (int i = 0; i < poolSize; i++) {
+                workers[i] = new Worker(this, i);
+            }
+            Logs.SERVER.info("start workerPool size : {} ...", poolSize);
+        }
+
+        /**
+         * 由监听线程往队列中放入socket,以备工作线程从中取值进行处理.
+         */
+        private void assign(Socket socket) throws Exception {
+            socketQueue.put(socket);
+        }
+
+        /**
+         * 工作线程从队列中取出socket.
+         */
+        private Socket await() throws Exception {
+            return socketQueue.take();
+        }
     }
 
 }
