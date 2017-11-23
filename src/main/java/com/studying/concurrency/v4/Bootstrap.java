@@ -1,4 +1,4 @@
-package com.studying.concurrency.v3;
+package com.studying.concurrency.v4;
 
 import com.studying.concurrency.util.Logs;
 
@@ -6,8 +6,8 @@ import java.io.File;
 import java.net.URL;
 
 /**
- * Created by junweizhang on 17/11/21.
- * 第三版 将main线程和服务线程分离.
+ * Created by junweizhang on 17/11/22.
+ * 第三版 解决串行化问题.
  * 抽象出四个角色:
  *      Bootstrap-启动器
  *      WebServer-Web服务器

@@ -1,4 +1,4 @@
-package com.studying.concurrency.v3;
+package com.studying.concurrency.v4;
 
 import com.studying.concurrency.util.Logs;
 
@@ -8,13 +8,13 @@ import java.net.Socket;
 import java.net.URLConnection;
 
 /**
- * Created by junweizhang on 17/11/21.
- * 第三版 将main线程和服务线程分离.
+ * Created by junweizhang on 17/11/22.
+ * 第四版 解决串行化问题.
  * 抽象出四个角色:
- *      Bootstrap-启动器
- *      WebServer-Web服务器
- *      Worker-处理HTTP请求的工作者.
- *      Acceptor-监听器
+ * Bootstrap-启动器
+ * WebServer-Web服务器
+ * Worker-处理HTTP请求的工作者.
+ * Acceptor-监听器
  */
 public class WebServer {
 
@@ -36,17 +36,15 @@ public class WebServer {
     // 监听Socket线程
     private Thread acceptorThread;
 
-    // 监听到的socket
-    private Socket socket;
-
-    // 表示当前监听到的socket是否可用
-    private boolean available;
+    // 监听到的socket队列
+    private SimpleQueue<Socket> socketQueue;
 
     public WebServer(int port, File docRoot) throws Exception {
         // 1. 服务端启动8080端口，并一直监听；
         this.port = port;
         this.ss = new ServerSocket(port, 10);
         this.docRoot = docRoot;
+        this.socketQueue = new SimpleQueue<>(3);
         start(this);
     }
 
@@ -90,36 +88,17 @@ public class WebServer {
     }
 
     /**
-     * 由监听线程给socket赋值,以备工作线程从中取值进行处理.
+     * 由监听线程往队列中放入socket,以备工作线程从中取值进行处理.
      */
-    private synchronized void assign(Socket socket) throws Exception {
-        // 监听器线程给socket变量赋值,如果当前socket可用(即已经被赋过值还没被工作线程取走),则监听器线程进行等待
-        while (available) {
-            Logs.SERVER.info("{} wait assign socket : {}", Thread.currentThread().getName(), socket);
-            this.wait();
-        }
-        // 若socket状态不可用,则监听器线程赋值成功;并将状态置为可用,因为此时socket已经有值,可以让工作线程来取
-        this.socket = socket;
-        available = true;
-        // 上边赋值成功后,监听器线程通知在等待的工作线程可以来取socket了
-        this.notify();
+    private void assign(Socket socket) throws Exception {
+        socketQueue.put(socket);
     }
 
     /**
-     * 工作线程取出当前的socket.
+     * 工作线程从队列中取出socket.
      */
-    private synchronized Socket await() throws Exception {
-        // 工作线程来取socket,如果当前socket不可用(即socket还没有被赋值),则工作线程进行等待
-        while (!available) {
-            Logs.SERVER.info("{} wait get socket", Thread.currentThread().getName());
-            this.wait();
-        }
-        // socket可用,则工作线程取到socket;并将状态置为不可用,因为工作线程已经取走
-        Socket socket = this.socket;
-        available = false;
-        // 工作线程通知监听器线程:现在socket对象已被取走,监听器线程可以再去给socket赋值了
-        this.notify();
-        return socket;
+    private Socket await() throws Exception {
+        return socketQueue.take();
     }
 
     /**
@@ -239,12 +218,80 @@ public class WebServer {
                     if (s != null) {
                         Logs.SERVER.info("worker begin process socket : {}", s);
                         process(s);
-                        socket = null;
                     }
                 }
             } catch (Exception e) {
                 Logs.SERVER.error("Worker process error", e);
             }
+        }
+
+    }
+
+    /**
+     * 一个简单的阻塞队列(先进先出),线程安全,不支持扩容,用数组实现.
+     */
+    public class SimpleQueue<E> {
+
+        // 元素数据
+        private Object[] items;
+
+        // 队列容量
+        private int capacity;
+
+        // 队列头索引
+        private int putIndex;
+
+        // 队列尾索引
+        private int takeIndex;
+
+        // 队列当前元素个数
+        private int size;
+
+        public SimpleQueue(int cap) {
+            this.capacity = cap;
+            this.items = new Object[cap];
+            this.size = 0;
+            this.putIndex = 0;
+            this.takeIndex = 0;
+        }
+
+        public synchronized void put(E e) throws InterruptedException {
+            // 监听器线程往队列中放入socket,如果当前队列满了则监听器等待
+            if (isFull()) {
+                Logs.SERVER.info("{} wait put queue : {}", Thread.currentThread().getName(), e);
+                wait();
+            }
+            // 若队列没满,则监听器线程往队列中放入socket;并且如果先前已经有工作线程在等待取数据,通知工作线程来取
+            items[putIndex] = e;
+            putIndex = (putIndex + 1) % capacity;
+            size++;
+            Logs.SERVER.info("queue isFull {}, isEmpty {}, capacity {}, size {}, takeIndex {}, putIndex {}", isFull(), isEmpty(), capacity, size, takeIndex, putIndex);
+            notify();
+        }
+
+        public synchronized E take() throws InterruptedException {
+            // 工作线程来取socket,如果当前队列为空,则工作线程进行等待
+            if (isEmpty()) {
+                Logs.SERVER.info("{} wait get socket", Thread.currentThread().getName());
+                wait();
+            }
+            // 队列不为空,工作线程从队列中取出socket;并且如果先前有监听器线程在等待往队列中放数据,通知监听器线程放
+            E e = (E) items[takeIndex];
+            // 将已经取走的引用置为空,让GC可以回收
+            items[takeIndex] = null;
+            takeIndex = (takeIndex + 1) % capacity;
+            size--;
+            Logs.SERVER.info("queue isFull {}, isEmpty {}, capacity {}, size {}, takeIndex {}, putIndex {}", isFull(), isEmpty(), capacity, size, takeIndex, putIndex);
+            notify();
+            return e;
+        }
+
+        public synchronized boolean isFull() {
+            return capacity == size;
+        }
+
+        public synchronized boolean isEmpty() {
+            return size == 0;
         }
 
     }
