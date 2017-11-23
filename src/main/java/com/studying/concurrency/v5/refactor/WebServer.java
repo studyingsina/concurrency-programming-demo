@@ -60,20 +60,6 @@ public class WebServer {
         Logs.SERVER.info("start acceptor thread : {} ...", acceptorThread.getName());
     }
 
-    public void serve() {
-        Logs.SERVER.info("Http Server ready to receive requests...");
-        while (!isStop) {
-            try {
-                Socket socket = listen();
-                process(socket);
-            } catch (Exception e) {
-                Logs.SERVER.error("serve error", e);
-                isStop = true;
-                // System.exit(1);
-            }
-        }
-    }
-
     /**
      * 2. 监听到有客户端（比如浏览器）要请求http://localhost:8080/，那么建议连接，TCP三次握手；
      */
@@ -295,7 +281,7 @@ public class WebServer {
     }
 
     /**
-     * 一个简单的固定大小线程池,数据实现,任务先放入阻塞队列,工作线程不断去队列中取任务.
+     * 一个简单的固定大小线程池,数组实现,任务先放入阻塞队列,工作线程不断去队列中取任务.
      */
     public class ThreadPool {
 
